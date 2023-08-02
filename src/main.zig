@@ -18,6 +18,7 @@ pub const HttpParser = struct {
     }
 
     pub fn deinit(self: *HttpParser) void {
+        std.debug.assert(self.state == .idle);
         self.buffer.deinit();
     }
 
@@ -38,24 +39,31 @@ pub const HttpParser = struct {
     }
 };
 
+fn parse_http_messages(allocator: std.mem.Allocator, input: []const u8) !std.ArrayList(HttpMessage) {
+    var parser = HttpParser.init(allocator);
+    defer parser.deinit();
+
+    var result = std.ArrayList(HttpMessage).init(allocator);
+    for (input) |byte| {
+        if (try parser.handle(byte)) |new_message| {
+            try result.append(new_message);
+        }
+    }
+    return result;
+}
+
 // TODO(Fifnmar) Extract logic?
 test "Segment byte stream into HTTP packets" {
     const msg = "GET / HTTP/1.1\r\nHost: www.example.com\r\n\r\n";
     const input = msg ** 2;
-    var parser = HttpParser.init(std.testing.allocator);
-    defer parser.deinit();
-    var messages = std.ArrayList(HttpMessage).init(std.testing.allocator);
+
+    const messages = try parse_http_messages(std.testing.allocator, input);
     defer messages.deinit();
     defer for (messages.items) |x| std.testing.allocator.free(x.raw);
-    for (input) |byte| {
-        if (try parser.handle(byte)) |x| {
-            try messages.append(x);
-        }
-    }
+
     try std.testing.expectEqual(messages.items.len, 2);
     try std.testing.expectEqualSlices(u8, messages.items[0].raw, msg);
-    try std.testing.expectEqualSlices(u8, messages.items[0].raw, msg);
-    try std.testing.expectEqual(parser.state, .idle);
+    try std.testing.expectEqualSlices(u8, messages.items[1].raw, msg);
 }
 
 test "Ill-formed HTTP" {
